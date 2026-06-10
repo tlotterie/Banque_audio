@@ -11,10 +11,6 @@ from scipy.linalg import eig
 from scipy.signal import resample
 from scipy.linalg import svd
 import matplotlib.cm as cm
-from scipy.special import j1
-from scipy.ndimage import label as label_cc
-from skimage.feature import peak_local_max
-from skimage.segmentation import watershed
 import time
 
 #%% Functions 
@@ -73,7 +69,7 @@ idx_c_init      = np.isfinite(wn_c) & (wn_c < 2 * np.pi * np.max(f_lim))
 wn_c            = wn_c[idx_c_init]
 mn_c            = mn_c[idx_c_init]
 kn_c            = kn_c[idx_c_init]
-cn_c            = cn_c[idx_c_init]
+cn_c            = cn_c[idx_c_init] 
 phinx_c         = phinx_c[idx_c_init]
 phiny_c         = phiny_c[idx_c_init]
 phinz_c         = phinz_c[idx_c_init]
@@ -241,53 +237,65 @@ z                   = np.concatenate((z_c, z_s))
 
 rho_a                   = 1.293
 c_a                     = 343
-seuil_lobe              = 0.05
-min_distance_extrema    = 5
-min_distance_min        = 1
-min_distance_max        = 20
-b                       = 0
-
 Fe_ac = 40e3
 
 sound_dir = os.path.join("Results", "Sound")
 os.makedirs(sound_dir, exist_ok=True)
 
-tol_z       = 1e-10 * max(1.0, np.max(np.abs(z_c)))
-idx_surface = z_c < (np.max(z_c) - tol_z)
+idx_surface = z_c == np.min(z_c)
 
-if np.sum(idx_surface) < 4:
-    idx_surface = np.ones(N_c, dtype=bool)
+xg = x_c[idx_surface]
+yg = y_c[idx_surface]
+zg = z_c[idx_surface]
 
-idx_surface_global = np.where(idx_surface)[0]
-
-xg = x_c[idx_surface_global].astype(float)
-yg = y_c[idx_surface_global].astype(float)
-zg = z_c[idx_surface_global].astype(float)
-
-phiz_points_all = np.real(phinz_c[:, idx_surface_global]).T
+phiz_points_all = np.real(phinz_c[:, idx_surface]).T
 
 x_ligne = np.unique(np.round(xg, 10))
 y_ligne = np.unique(np.round(yg, 10))
 
-Nx_ac = x_ligne.size
-Ny_ac = y_ligne.size
-
-ix = np.searchsorted(x_ligne, np.round(xg, 10))
-iy = np.searchsorted(y_ligne, np.round(yg, 10))
-
-ordre = -np.ones((Ny_ac, Nx_ac), dtype=int)
-
-for k in range(xg.size):
-    ordre[iy[k], ix[k]] = k
-
-masque_surface = ordre >= 0
-
-X2, Y2 = np.meshgrid(x_ligne, y_ligne, indexing="xy")
-
 dx = np.median(np.diff(x_ligne))
 dy = np.median(np.diff(y_ligne))
 dS = dx * dy
-surface_min_source = b * dS
+
+Ntheta_sigma = 24
+Nphi_sigma = 48
+
+def sigma_rayleigh_mode(Phi, omega):
+    Phi = np.real(Phi)
+    omega = np.real(omega)
+    int_phi2 = np.sum(Phi**2)*dS
+    k = omega/ c_a
+    dtheta = (np.pi / 2) / Ntheta_sigma
+    dphi = (2 * np.pi) / Nphi_sigma
+    P_rad = 0
+
+    for it in range(Ntheta_sigma):
+        theta = (it + 0.5) * dtheta
+        sint = np.sin(theta)
+
+        for ip in range(Nphi_sigma):
+            phi_ang = (ip + 0.5) * dphi
+            kx = k * sint * np.cos(phi_ang)
+            ky = k * sint * np.sin(phi_ang)
+            phase = kx * xg + ky * yg
+            W_chapeau = np.sum(Phi * dS * np.exp(1j * phase))
+            p_amp = rho_a * omega**2 / (2 * np.pi) * W_chapeau
+            P_rad += (np.abs(p_amp)**2 / (2 * rho_a * c_a)) * sint * dtheta * dphi
+
+    P_ref = 0.5 * rho_a * c_a * omega**2 * int_phi2
+    sigma = P_rad / (P_ref + 1e-30)
+    return float(np.real(sigma))
+
+sigma_air_c = np.zeros(wn_c.size)
+
+for im in range(wn_c.size):
+    sigma_air_c[im] = sigma_rayleigh_mode(phiz_points_all[:, im], wn_c[im])
+
+int_phi2_c = np.sum(phiz_points_all**2, axis=0) * dS
+rhoh_eff_c = mn_c / np.maximum(int_phi2_c, 1e-30)
+alpha_air_c = n_faces_air * rho_a * c_a * sigma_air_c / (2 * rhoh_eff_c)
+cn_air_c = 2 * mn_c * alpha_air_c
+cn_c = cn_c + cn_air_c
 
 xc = 0.5 * (xg.min() + xg.max())
 yc = 0.5 * (yg.min() + yg.max())
@@ -328,193 +336,6 @@ def audio_int32(s):
     s = audio_norm(s)
     return (s * np.iinfo(np.int32).max).astype(np.int32)
 
-def perimetre(masque):
-    mp = np.pad(masque, 1, constant_values=False)
-    p = dy * np.sum(mp[:, 1:] != mp[:, :-1]) + dx * np.sum(mp[1:, :] != mp[:-1, :])
-    return p
-
-def direct_piston(x):
-    x = np.asarray(x)
-    x = np.real(x).astype(float)
-    y = np.ones_like(x, dtype=float)
-    ind = np.abs(x) > 1e-10
-    y[ind] = 2 * j1(x[ind]) / x[ind]
-    return y
-
-def phi_points_to_grid(Phi):
-    Phi2 = np.zeros((Ny_ac, Nx_ac), dtype=float)
-    ind = ordre[masque_surface]
-    Phi2[masque_surface] = np.real(Phi[ind])
-    return Phi2
-
-def zero_crossings_segment(ligne, coord_ligne, valid_ligne, eps):
-    lambdas = []
-    ind_valid = np.where(valid_ligne)[0]
-
-    if ind_valid.size < 3:
-        return lambdas
-
-    breaks = np.where(np.diff(ind_valid) > 1)[0]
-    debuts = np.r_[0, breaks + 1]
-    fins = np.r_[breaks, ind_valid.size - 1]
-
-    for a, bseg in zip(debuts, fins):
-        ind_seg = ind_valid[a:bseg+1]
-
-        if ind_seg.size < 3:
-            continue
-
-        vals = ligne[ind_seg]
-        coords = coord_ligne[ind_seg]
-        signe = np.sign(vals)
-        signe[np.abs(vals) < eps] = 0
-
-        ok = signe != 0
-
-        if np.sum(ok) < 3:
-            continue
-
-        coords_ok = coords[ok]
-        s_ok = signe[ok]
-
-        ind = np.where(s_ok[:-1] * s_ok[1:] < 0)[0]
-
-        if ind.size >= 2:
-            zeros = 0.5 * (coords_ok[ind] + coords_ok[ind+1])
-            dz = np.diff(zeros)
-            dz = dz[dz > 0]
-
-            if dz.size > 0:
-                lambdas.append(2 * np.mean(dz))
-
-    return lambdas
-
-def estime_lambda_zero_crossing(Phi):
-    Phi2 = phi_points_to_grid(Phi)
-
-    if np.max(np.abs(Phi2[masque_surface])) <= 1e-14:
-        return None
-
-    eps = seuil_lobe * np.max(np.abs(Phi2[masque_surface]))
-    lambdas = []
-
-    for iy0 in range(Ny_ac):
-        lambdas += zero_crossings_segment(Phi2[iy0, :], x_ligne, masque_surface[iy0, :], eps)
-
-    for ix0 in range(Nx_ac):
-        lambdas += zero_crossings_segment(Phi2[:, ix0], y_ligne, masque_surface[:, ix0], eps)
-
-    if len(lambdas) == 0:
-        return None
-
-    return np.min(lambdas)
-
-def min_distance_depuis_mode(Phi):
-    lambda_eff = estime_lambda_zero_crossing(Phi)
-
-    if lambda_eff is None:
-        return min_distance_extrema
-
-    dmin_phys = lambda_eff / 4
-    d_pixel = np.sqrt(dx * dy)
-
-    min_dist = int(np.round(dmin_phys / d_pixel))
-    min_dist = max(min_distance_min, min_dist)
-    min_dist = min(min_distance_max, min_dist)
-
-    return min_dist
-
-def labels_watershed(Phi2, signe, min_distance_local):
-    img = np.real(signe * Phi2)
-    img[~masque_surface] = 0.0
-
-    maxi = np.max(img[masque_surface])
-
-    if maxi <= 0:
-        return np.zeros_like(img, dtype=int), 0
-
-    seuil = seuil_lobe * maxi
-    masque = (img > seuil) & masque_surface
-
-    if not np.any(masque):
-        return np.zeros_like(img, dtype=int), 0
-
-    struct = np.array([[0,1,0],[1,1,1],[0,1,0]])
-    lab0, nlab0 = label_cc(masque, structure=struct)
-    marqueurs = np.zeros_like(img, dtype=int)
-    k = 0
-
-    for jj in range(1, nlab0 + 1):
-        zone = lab0 == jj
-        pts = peak_local_max(img, labels=zone, min_distance=min_distance_local, exclude_border=False)
-
-        if pts.size == 0:
-            pts_zone = np.argwhere(zone)
-            ind = np.argmax(img[zone])
-            iy0, ix0 = pts_zone[ind]
-            k += 1
-            marqueurs[iy0, ix0] = k
-        else:
-            for iy0, ix0 in pts:
-                k += 1
-                marqueurs[iy0, ix0] = k
-
-    if k == 0:
-        return lab0, nlab0
-
-    lab = watershed(-img, marqueurs, mask=masque, connectivity=1)
-    return lab, int(lab.max())
-
-def lobes_depuis_labels(Phi2, lab, nlab, centre):
-    infos_lobes = []
-
-    for jj in range(1, nlab + 1):
-        mask = lab == jj
-        Sj = np.sum(mask) * dS
-
-        if Sj < surface_min_source:
-            continue
-
-        Ij = np.sum(Phi2[mask]) * dS
-
-        if abs(Ij) < 1e-14:
-            continue
-
-        if centre == "bary":
-            xj = np.sum(X2[mask] * Phi2[mask]) * dS / Ij
-            yj = np.sum(Y2[mask] * Phi2[mask]) * dS / Ij
-
-        if centre == "pic":
-            pts = np.argwhere(mask)
-            kk = np.argmax(np.abs(Phi2[mask]))
-            iy0, ix0 = pts[kk]
-            xj = X2[iy0, ix0]
-            yj = Y2[iy0, ix0]
-
-        Pj = perimetre(mask)
-        infos_lobes.append((xj, yj, Ij, Sj, Pj))
-
-    return infos_lobes
-
-def lobes_sources(Phi, min_distance_local):
-    Phi2 = phi_points_to_grid(Phi)
-    infos_lobes = []
-
-    for signe in [1, -1]:
-        lab, nlab = labels_watershed(Phi2, signe, min_distance_local)
-        infos_lobes += lobes_depuis_labels(Phi2, lab, nlab, "bary")
-
-    return infos_lobes
-
-def lobes_pistons(Phi, min_distance_local):
-    Phi2 = phi_points_to_grid(Phi)
-    infos_lobes = []
-
-    for signe in [1, -1]:
-        lab, nlab = labels_watershed(Phi2, signe, min_distance_local)
-        infos_lobes += lobes_depuis_labels(Phi2, lab, nlab, "pic")
-
-    return infos_lobes
 
 def regroupe_retards(rets, coefs):
     if len(rets) == 0:
@@ -534,43 +355,6 @@ def termes_rayleigh_mode(Phi, x_mic, y_mic, z_mic):
     coef = rho_a / (2*np.pi) * Phi * dS / r
     return regroupe_retards(ret, coef)
 
-def termes_sources_mode(Phi, min_distance_local, x_mic, y_mic, z_mic):
-    lob = lobes_sources(Phi, min_distance_local)
-    rets = []
-    coefs = []
-
-    for xj, yj, Ij, Sj, Pj in lob:
-        rj = np.sqrt((x_mic-xj)**2 + (y_mic-yj)**2 + (z_mic-zc)**2)
-        ret = int(np.rint(rj/c_a*Fe_ac))
-        coef = rho_a/(2*np.pi) * Ij / rj
-
-        rets.append(ret)
-        coefs.append(coef)
-
-    return regroupe_retards(rets, coefs), len(lob)
-
-def termes_pistons_mode(Phi, freq, min_distance_local, x_mic, y_mic, z_mic):
-    lob = lobes_pistons(Phi, min_distance_local)
-    rets = []
-    coefs = []
-    k0 = 2*np.pi*float(freq)/c_a
-
-    for xj, yj, Ij, Sj, Pj in lob:
-        if Pj <= 0 or Sj <= 0:
-            continue
-
-        aj = 1.06 * Sj**0.75 / np.sqrt(Pj)
-        rj = np.sqrt((x_mic-xj)**2 + (y_mic-yj)**2 + (z_mic-zc)**2)
-        sintheta = np.sqrt((x_mic-xj)**2 + (y_mic-yj)**2) / rj
-        Dj = direct_piston(k0 * aj * sintheta)[()]
-        ret = int(np.rint(rj/c_a*Fe_ac))
-        coef = rho_a/(2*np.pi) * Ij * Dj / rj
-
-        rets.append(ret)
-        coefs.append(coef)
-
-    return regroupe_retards(rets, coefs), len(lob)
-
 def pression_depuis_termes(qdd_modes, termes):
     p = np.zeros(qdd_modes.shape[1])
 
@@ -587,19 +371,10 @@ def filtre_termes(termes, idx):
     return [termes[k] for k in ind]
 
 freq_c_all = np.real(wn_c) / (2*np.pi)
-min_distance_modes = np.array([min_distance_depuis_mode(phiz_points_all[:, im]) for im in range(phiz_points_all.shape[1])],dtype=int)
 
 rad_rayleigh_spectator  = []
 rad_rayleigh_musician   = []
-rad_sources_spectator   = []
-rad_sources_musician    = []
-rad_pistons_spectator   = []
-rad_pistons_musician    = []
 
-nb_sources_modes_spectator = np.zeros(phiz_points_all.shape[1], dtype=int)
-nb_sources_modes_musician = np.zeros(phiz_points_all.shape[1], dtype=int)
-nb_pistons_modes_spectator = np.zeros(phiz_points_all.shape[1], dtype=int)
-nb_pistons_modes_musician = np.zeros(phiz_points_all.shape[1], dtype=int)
 
 print("=== Pré-calcul rayonnement modal ===")
 print("points acoustiques =", xg.size)
@@ -612,36 +387,11 @@ print("dx =", dx, "dy =", dy, "dS =", dS)
 
 for im in range(phiz_points_all.shape[1]):
     Phi = phiz_points_all[:, im]
-    md = min_distance_modes[im]
-    f_mode = freq_c_all[im]
 
     rad_rayleigh_spectator.append(termes_rayleigh_mode(Phi, x_mic_spectator, y_mic_spectator, z_mic_spectator))
     rad_rayleigh_musician.append(termes_rayleigh_mode(Phi, x_mic_musician, y_mic_musician, z_mic_musician))
 
-    termes_src, nsrc = termes_sources_mode(Phi, md, x_mic_spectator, y_mic_spectator, z_mic_spectator)
-    rad_sources_spectator.append(termes_src)
-    nb_sources_modes_spectator[im] = nsrc
-
-    termes_src, nsrc = termes_sources_mode(Phi, md, x_mic_musician, y_mic_musician, z_mic_musician)
-    rad_sources_musician.append(termes_src)
-    nb_sources_modes_musician[im] = nsrc
-
-    termes_pis, npis = termes_pistons_mode(Phi, f_mode, md, x_mic_spectator, y_mic_spectator, z_mic_spectator)
-    rad_pistons_spectator.append(termes_pis)
-    nb_pistons_modes_spectator[im] = npis
-
-    termes_pis, npis = termes_pistons_mode(Phi, f_mode, md, x_mic_musician, y_mic_musician, z_mic_musician)
-    rad_pistons_musician.append(termes_pis)
-    nb_pistons_modes_musician[im] = npis
-
-print("Pré-traitement terminé")
-print("min_distance : min =", min_distance_modes.min(), "max =", min_distance_modes.max())
-print("sources spectateur totales =", nb_sources_modes_spectator.sum())
-print("pistons spectateur totaux =", nb_pistons_modes_spectator.sum())
-print("===================================")
-
-
-
+print("Pré-traitement Rayleigh terminé")
 
 #%% Time-domain parameters
 
@@ -656,13 +406,9 @@ t       = np.arange(0,T,Te)
 N_t     = t.size
 
 uddz            = np.zeros((f_lim.size, N_t)) # Bridge acceleration
-P_spectator            = np.zeros((f_lim.size, N_t)) # Pressure at spectator position
+P_spectator     = np.zeros((f_lim.size, N_t)) # Pressure at spectator position
 P_musician      = np.zeros((f_lim.size, N_t)) # Pressure at musician position
 
-P_spectator_sources    = np.zeros((f_lim.size, N_t))
-P_spectator_pistons    = np.zeros((f_lim.size, N_t))
-P_mus_sources   = np.zeros((f_lim.size, N_t))
-P_mus_pistons   = np.zeros((f_lim.size, N_t))
 
 for j in range(f_lim.size):
     # Select modes whose modal frequencies are under f_lim
@@ -679,16 +425,7 @@ for j in range(f_lim.size):
 
     rad_rayleigh_spectator = filtre_termes(rad_rayleigh_spectator, idx)
     rad_rayleigh_musician = filtre_termes(rad_rayleigh_musician, idx)
-    rad_sources_spectator = filtre_termes(rad_sources_spectator, idx)
-    rad_sources_musician = filtre_termes(rad_sources_musician, idx)
-    rad_pistons_spectator = filtre_termes(rad_pistons_spectator, idx)
-    rad_pistons_musician = filtre_termes(rad_pistons_musician, idx)
 
-    min_distance_modes = min_distance_modes[idx]
-    nb_sources_modes_spectator = nb_sources_modes_spectator[idx]
-    nb_sources_modes_musician = nb_sources_modes_musician[idx]
-    nb_pistons_modes_spectator = nb_pistons_modes_spectator[idx]
-    nb_pistons_modes_musician = nb_pistons_modes_musician[idx]
 
     # Select only the radiation terms for modes under f_lim
 
@@ -908,25 +645,8 @@ for j in range(f_lim.size):
     P_musician[j]   = pression_depuis_termes(qdd_struct, rad_rayleigh_musician)
     temps_rayleigh  = time.perf_counter() - t0_ray
 
-    print("Calcul pression sources minimales...")
-    t0_src                  = time.perf_counter()
-    P_spectator_sources[j]  = pression_depuis_termes(qdd_struct, rad_sources_spectator)
-    P_mus_sources[j]        = pression_depuis_termes(qdd_struct, rad_sources_musician)
-    temps_sources           = time.perf_counter() - t0_src
-
-    print("Calcul pression pistons équivalents...")
-    t0_pis                  = time.perf_counter()
-    P_spectator_pistons[j]  = pression_depuis_termes(qdd_struct, rad_pistons_spectator)
-    P_mus_pistons[j]        = pression_depuis_termes(qdd_struct, rad_pistons_musician)
-    temps_pistons           = time.perf_counter() - t0_pis
-
     print("=== Rayonnement f_lim =", f_lim[j], "Hz ===")
     print("Rayleigh direct :", temps_rayleigh, "s")
-    print("Sources minimales :", temps_sources, "s")
-    print("Pistons équivalents :", temps_pistons, "s")
-    print("sources spectateur =", nb_sources_modes_spectator.sum())
-    print("pistons spectateur =", nb_pistons_modes_spectator.sum())
-    print("min_distance : min =", min_distance_modes.min(), "max =", min_distance_modes.max())
     print("===========================================")
 
 
@@ -939,11 +659,7 @@ np.savez(
     f_lim=f_lim,
     uddz=uddz,
     P_spectator_rayleigh=P_spectator,
-    P_spectator_sources=P_spectator_sources,
-    P_spectator_pistons=P_spectator_pistons,
     P_musician_rayleigh=P_musician,
-    P_musician_sources=P_mus_sources,
-    P_musician_pistons=P_mus_pistons,
     x_mic_spectator=x_mic_spectator,
     y_mic_spectator=y_mic_spectator,
     z_mic_spectator=z_mic_spectator,
@@ -959,8 +675,6 @@ np.savez(
     name_struct=name_struct,
     file_c_path=file_c_path,
     string_plucked=string_plucked,
-    seuil_lobe=seuil_lobe,
-    surface_min_source=surface_min_source
 )
 
 scaled = (uddz / np.max(np.abs(uddz)) * np.iinfo(np.int32).max).astype(np.int32)
@@ -971,18 +685,6 @@ for i in range(uddz.shape[0]):
     write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_rayleigh_spectateur.wav"),
           int(Fe), np.pad(audio_int32(P_spectator[i]), (int(1*Fe),0)))
 
-    write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_sources_minimales_spectateur.wav"),
-          int(Fe), np.pad(audio_int32(P_spectator_sources[i]), (int(1*Fe),0)))
-
-    write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_pistons_equivalents_spectateur.wav"),
-          int(Fe), np.pad(audio_int32(P_spectator_pistons[i]), (int(1*Fe),0)))
-
     write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_rayleigh_musician.wav"),
           int(Fe), np.pad(audio_int32(P_musician[i]), (int(1*Fe),0)))
 
-    write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_sources_minimales_musician.wav"),
-          int(Fe), np.pad(audio_int32(P_mus_sources[i]), (int(1*Fe),0)))
-
-    write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_pistons_equivalents_musician.wav"),
-          int(Fe), np.pad(audio_int32(P_mus_pistons[i]), (int(1*Fe),0)))
-    
