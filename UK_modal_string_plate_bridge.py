@@ -37,13 +37,8 @@ def first_existing(paths):
 
 name_struct    = "Plaque_Chevalet_Modal_Primal_Dx_0.103_Dy_3.500_cm_z_Nmc_99_Nmp_4784"
 
-file_c_path = first_existing([
-    os.path.join("Data", name_struct + ".npz"),
-    name_struct + ".npz"
-])
-
+file_c_path = first_existing([os.path.join("Data", name_struct + ".npz"),name_struct + ".npz"])
 file_c  = np.load(file_c_path, allow_pickle=True)
-
 print("File " + file_c_path + " opened.")
         
 #%%
@@ -80,9 +75,9 @@ w_max_s = 2 * np.pi * 20e3
 
 Dy = 2.031e-2
  
-string_names = np.array(["E2", "A2", "D3", "G3", "B3", "E4"])
+string_names = np.array(["E2", "A2", "D3", "G3", "B3", "E4"]) 
 
-string_plucked = string_names[0]
+string_plucked = string_names[0] #corde excitée
 
 string_mu       = {"E4" : 0.38e-3,
                    "B3" : 0.52e-3,
@@ -121,13 +116,7 @@ for (i,string_chosen) in enumerate(string_names):
     name_string = "String_modal_basis_" + string_chosen + "_Dy_" + f"{(np.round(Dy*100,3)):.3f}" +"_cm_T_"+\
             f"{(np.round(T,0)):.0f}"+"_N_mu_"+f"{(np.round(mu*1e6,0)):.0f}"+"_mg.m-1_Woodhouse_2012"
     
-    file_s_path = first_existing([
-        os.path.join("Data", name_string + ".npz"),
-        name_string + ".npz",
-        os.path.join("Data", name_string + " (1).npz"),
-        name_string + " (1).npz"
-    ])
-
+    file_s_path = first_existing([os.path.join("Data", name_string + ".npz"), name_string + ".npz", os.path.join("Data", name_string + " (1).npz"), name_string + " (1).npz"])
     file_s  = np.load(file_s_path, allow_pickle=True)
     print("File " + file_s_path + " opened.")
     
@@ -235,29 +224,29 @@ z                   = np.concatenate((z_c, z_s))
 
 #%% Pre-compute the modal radiation using the Rayleigh integral
 
-rho_a                   = 1.293
-c_a                     = 343
-Fe_ac = 40e3
+rho_a  = 1.293 #masse volumqiue de l'air
+c_a = 343 #célérité du son dans l'air
+Fe_ac = 40e3 #sert à convertir les retards acoustiques en nb d'échantillons, doit etre égale à Fe donnée plus bas
 
 sound_dir = os.path.join("Results", "Sound")
 os.makedirs(sound_dir, exist_ok=True)
 
 idx_surface = z_c == np.min(z_c)
 
-xg = x_c[idx_surface]
+xg = x_c[idx_surface] #points de grille
 yg = y_c[idx_surface]
 zg = z_c[idx_surface]
 
 phiz_points_all = np.real(phinz_c[:, idx_surface]).T
 
-x_ligne = np.unique(np.round(xg, 10))
-y_ligne = np.unique(np.round(yg, 10))
+x_ligne = np.unique(xg) #tri les valeurs des points de grille
+y_ligne = np.unique(yg)
 
-dx = np.median(np.diff(x_ligne))
-dy = np.median(np.diff(y_ligne))
-dS = dx * dy
+dx = np.mean(np.diff(x_ligne)) #ecart entre deux points selon l'axe x
+dy = np.mean(np.diff(y_ligne)) #ecart entre deux points selon l'axe y
+dS = dx * dy #element de surface utilisé lors des calculs d'intégrales
 
-Ntheta_sigma = 24
+Ntheta_sigma = 24 #pas angulaires pour le calcul d'intégral du calcul d'efficacité
 Nphi_sigma = 48
 
 def sigma_rayleigh_mode(Phi, omega):
@@ -278,7 +267,7 @@ def sigma_rayleigh_mode(Phi, omega):
             kx = k * sint * np.cos(phi_ang)
             ky = k * sint * np.sin(phi_ang)
             phase = kx * xg + ky * yg
-            W_chapeau = np.sum(Phi * dS * np.exp(1j * phase))
+            W_chapeau = np.sum(Phi * dS * np.exp(1j * phase)) #transformée de Fourier
             p_amp = rho_a * omega**2 / (2 * np.pi) * W_chapeau
             P_rad += (np.abs(p_amp)**2 / (2 * rho_a * c_a)) * sint * dtheta * dphi
 
@@ -293,23 +282,24 @@ for im in range(wn_c.size):
 
 int_phi2_c = np.sum(phiz_points_all**2, axis=0) * dS
 rhoh_eff_c = mn_c / np.maximum(int_phi2_c, 1e-30)
-alpha_air_c = n_faces_air * rho_a * c_a * sigma_air_c / (2 * rhoh_eff_c)
+alpha_air_c = rho_a * c_a * sigma_air_c / (2 * rhoh_eff_c) #facteur d'amortissement de l'air
 cn_air_c = 2 * mn_c * alpha_air_c
-cn_c = cn_c + cn_air_c
 
-xc = 0.5 * (xg.min() + xg.max())
-yc = 0.5 * (yg.min() + yg.max())
+cn_c = cn_c + cn_air_c #ajout de l'amortissement de l'air
+
+xc = 0.5 * (xg.min() + xg.max()) #abscisse du centre de la grille acoustique
+yc = 0.5 * (yg.min() + yg.max()) #ordonnée du centre de la grille acoustique
 zc = np.mean(zg)
 
-r_spectator         = 2.0
-theta_spectator_deg = 5.0
+r_spectator         = 2.0 #distance absolue entre le centre de la plaque et le spectateur
+theta_spectator_deg = 5.0 #le spectateur est situé en face de la guitare
 phi_spectator_deg   = 0.0
 
-r_musician          = 0.50
-theta_musician_deg  = 75.0
+r_musician          = 0.50 #distance absolue entre le centre de la plaque et le musicien
+theta_musician_deg  = 75.0 #incidence rasante pour le guitariste
 phi_musician_deg    = 180.0
 
-def point_micro(r, theta_deg, phi_deg):
+def point_micro(r, theta_deg, phi_deg): #renvoie les coordonnées cartésiennes des points d'écoute
     theta = np.deg2rad(theta_deg)
     phi = np.deg2rad(phi_deg)
     xm = xc + r * np.sin(theta) * np.cos(phi)
@@ -321,52 +311,43 @@ x_mic_spectator, y_mic_spectator, z_mic_spectator = point_micro(r_spectator, the
 x_mic_musician, y_mic_musician, z_mic_musician = point_micro(r_musician, theta_musician_deg, phi_musician_deg)
 
 def ajoute_retard(p, s, retard, coef):
+    #ajoute dans p le signal s retardé de "retard" échantillons multiplié par le coefficient acoustique coef.
+    #p: signal de pression à construire
+    #s: contribution d'un signal dans p, dans notre cas c'est l'accélération modale
+    #retard : retard entier en nombre d'échantillons
+    #coef: coefficient acoustique dans la formule de l'intégrale de Rayleigh
+
     if retard < p.size:
-        p[retard:] += coef * s[:p.size-retard]
-
-def audio_norm(s):
-    s = np.real(s)
-    s = s - np.mean(s)
-    m = np.max(np.abs(s))
-    if m > 0:
-        s = 0.95 * s / m
-    return s
-
-def audio_int32(s):
-    s = audio_norm(s)
-    return (s * np.iinfo(np.int32).max).astype(np.int32)
+       p[retard:] += coef * s[:p.size-retard]  #comme le signal est retardé, on tronque la fin de s pour ne pas dépasser p.size.
 
 
-def regroupe_retards(rets, coefs):
+def regroupe_retards(rets, coefs): #regroupe les contributions qui ont le même retard temporel
     if len(rets) == 0:
         return np.zeros(0, dtype=int), np.zeros(0, dtype=float)
 
     rets = np.array(rets, dtype=int)
     coefs = np.array(coefs, dtype=float)
-
-    coeff = np.bincount(rets, weights=coefs, minlength=rets.max()+1)
+    coeff = np.bincount(rets, weights=coefs, minlength=rets.max()+1) #np.bincount additionne les coefficients par valeur de retard
     ind = np.nonzero(np.abs(coeff) > 1e-18)[0]
-
     return ind.astype(int), coeff[ind].astype(float)
 
-def termes_rayleigh_mode(Phi, x_mic, y_mic, z_mic):
-    r = np.sqrt((x_mic - xg)**2 + (y_mic - yg)**2 + (z_mic - zg)**2)
-    ret = np.rint((r / c_a) * Fe_ac).astype(int)
-    coef = rho_a / (2*np.pi) * Phi * dS / r
+
+def termes_rayleigh_mode(Phi, x_mic, y_mic, z_mic):  #pré-calcule les termes Rayleigh pour un mode
+    r = np.sqrt((x_mic - xg)**2 + (y_mic - yg)**2 + (z_mic - zg)**2) #distance entre chaque point de surface et le microphone
+    ret = np.rint((r / c_a) * Fe_ac).astype(int) #retard converti en nb d'échantillons
+    coef = rho_a / (2*np.pi) * Phi * dS / r #coeff acoustique pour la fonction retard
     return regroupe_retards(ret, coef)
+
 
 def pression_depuis_termes(qdd_modes, termes):
     p = np.zeros(qdd_modes.shape[1])
-
     for im, (rets, coefs) in enumerate(termes):
-        sig = qdd_modes[im]
-
+        sig = qdd_modes[im] #accélération modale
         for ret, coef in zip(rets, coefs):
             ajoute_retard(p, sig, ret, coef)
-
     return p
 
-def filtre_termes(termes, idx):
+def filtre_termes(termes, idx): #idx = wn_c < 2*pi*f_lim
     ind = np.where(idx)[0]
     return [termes[k] for k in ind]
 
@@ -376,9 +357,9 @@ rad_rayleigh_spectator  = []
 rad_rayleigh_musician   = []
 
 
-print("=== Pré-calcul rayonnement modal ===")
+print("=== pré-calcul rayonnement modal ===")
 print("points acoustiques =", xg.size)
-print("modes structure initiaux =", phiz_points_all.shape[1])
+print("modes structure initiaux =", phiz_points_all.shape[1]) #combien de modes gardés avec telle f_lim
 print("micro spectateur =", x_mic_spectator, y_mic_spectator, z_mic_spectator)
 print("r spectateur =", r_spectator, "theta =", theta_spectator_deg, "phi =", phi_spectator_deg)
 print("micro musicien =", x_mic_musician, y_mic_musician, z_mic_musician)
@@ -387,7 +368,6 @@ print("dx =", dx, "dy =", dy, "dS =", dS)
 
 for im in range(phiz_points_all.shape[1]):
     Phi = phiz_points_all[:, im]
-
     rad_rayleigh_spectator.append(termes_rayleigh_mode(Phi, x_mic_spectator, y_mic_spectator, z_mic_spectator))
     rad_rayleigh_musician.append(termes_rayleigh_mode(Phi, x_mic_musician, y_mic_musician, z_mic_musician))
 
@@ -395,7 +375,7 @@ print("Pré-traitement Rayleigh terminé")
 
 #%% Time-domain parameters
 
-T       = 1
+T       = 5
 Fe_simu = 70e3
 Te_simu = 1/Fe_simu
 t_simu  = np.arange(0,T,Te_simu)
@@ -636,17 +616,16 @@ for j in range(f_lim.size):
     
     uddz[j]         = phi[idx_temp[0][0]] @ qdd
     
-
     qdd_struct = qdd[:Nm_c]
 
-    print("Calcul pression Rayleigh direct...")
+    print("calcul pression Rayleigh direct...")
     t0_ray          = time.perf_counter()
     P_spectator[j]  = pression_depuis_termes(qdd_struct, rad_rayleigh_spectator)
     P_musician[j]   = pression_depuis_termes(qdd_struct, rad_rayleigh_musician)
     temps_rayleigh  = time.perf_counter() - t0_ray
 
-    print("=== Rayonnement f_lim =", f_lim[j], "Hz ===")
-    print("Rayleigh direct :", temps_rayleigh, "s")
+    print("=== rayonnement f_lim =", f_lim[j], "Hz ===")
+    print("rayleigh direct :", temps_rayleigh, "s")
     print("===========================================")
 
 
@@ -683,8 +662,8 @@ for i in range(uddz.shape[0]):
     write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_bridge_acc.wav"), int(Fe), np.pad(scaled[i], (int(1*Fe),0)))
 
     write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_rayleigh_spectateur.wav"),
-          int(Fe), np.pad(audio_int32(P_spectator[i]), (int(1*Fe),0)))
+          int(Fe), np.pad(scaled[i], (int(1*Fe),0)))
 
     write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_rayleigh_musician.wav"),
-          int(Fe), np.pad(audio_int32(P_musician[i]), (int(1*Fe),0)))
+          int(Fe), np.pad(scaled[i], (int(1*Fe),0)))
 
