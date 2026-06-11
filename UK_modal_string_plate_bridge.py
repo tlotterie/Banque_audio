@@ -27,18 +27,11 @@ def sample(sig, t, Fe_target):
 def low_pass(x, y, beta):
     return beta * y + (1 - beta) * x
 
-def first_existing(paths):
-    for p in paths:
-        if os.path.isfile(p):
-            return p
-    raise FileNotFoundError("Aucun fichier trouvé parmi : " + str(paths))
-
 #%% Load the body's modal basis
 
 name_struct    = "Plaque_Chevalet_Modal_Primal_Dx_0.103_Dy_3.500_cm_z_Nmc_99_Nmp_4784"
-
-file_c_path = first_existing([os.path.join("Data", name_struct + ".npz"),name_struct + ".npz"])
-file_c  = np.load(file_c_path, allow_pickle=True)
+file_c_path = os.path.join("Data", name_struct + ".npz")
+file_c = np.load(file_c_path, allow_pickle=True)
 print("File " + file_c_path + " opened.")
         
 #%%
@@ -115,9 +108,8 @@ for (i,string_chosen) in enumerate(string_names):
     
     name_string = "String_modal_basis_" + string_chosen + "_Dy_" + f"{(np.round(Dy*100,3)):.3f}" +"_cm_T_"+\
             f"{(np.round(T,0)):.0f}"+"_N_mu_"+f"{(np.round(mu*1e6,0)):.0f}"+"_mg.m-1_Woodhouse_2012"
-    
-    file_s_path = first_existing([os.path.join("Data", name_string + ".npz"), name_string + ".npz", os.path.join("Data", name_string + " (1).npz"), name_string + " (1).npz"])
-    file_s  = np.load(file_s_path, allow_pickle=True)
+    file_s_path = os.path.join("Data", name_string + ".npz")
+    file_s = np.load(file_s_path, allow_pickle=True)
     print("File " + file_s_path + " opened.")
     
     # Rotate string and attach to bridge
@@ -320,7 +312,6 @@ def ajoute_retard(p, s, retard, coef):
     if retard < p.size:
        p[retard:] += coef * s[:p.size-retard]  #comme le signal est retardé, on tronque la fin de s pour ne pas dépasser p.size.
 
-
 def regroupe_retards(rets, coefs): #regroupe les contributions qui ont le même retard temporel
     if len(rets) == 0:
         return np.zeros(0, dtype=int), np.zeros(0, dtype=float)
@@ -331,13 +322,11 @@ def regroupe_retards(rets, coefs): #regroupe les contributions qui ont le même 
     ind = np.nonzero(np.abs(coeff) > 1e-18)[0]
     return ind.astype(int), coeff[ind].astype(float)
 
-
 def termes_rayleigh_mode(Phi, x_mic, y_mic, z_mic):  #pré-calcule les termes Rayleigh pour un mode
     r = np.sqrt((x_mic - xg)**2 + (y_mic - yg)**2 + (z_mic - zg)**2) #distance entre chaque point de surface et le microphone
     ret = np.rint((r / c_a) * Fe_ac).astype(int) #retard converti en nb d'échantillons
     coef = rho_a / (2*np.pi) * Phi * dS / r #coeff acoustique pour la fonction retard
     return regroupe_retards(ret, coef)
-
 
 def pression_depuis_termes(qdd_modes, termes):
     p = np.zeros(qdd_modes.shape[1])
