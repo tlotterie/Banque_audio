@@ -647,12 +647,18 @@ np.savez(
 
 scaled = (uddz / np.max(np.abs(uddz)) * np.iinfo(np.int32).max).astype(np.int32)
 
+def audio_int32_uniform(s, max_global):
+    s = np.real(s)
+    s = s - np.mean(s)
+    s = 0.95 * s / max_global
+    return (s * np.iinfo(np.int32).max).astype(np.int32)
+    
+max_pression= max(np.max(np.abs(P_spectator)),np.max(np.abs(P_musician)))
+
 for i in range(uddz.shape[0]):
-    write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_bridge_acc.wav"), int(Fe), np.pad(scaled[i], (int(1*Fe),0)))
 
-    write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_rayleigh_spectateur.wav"),
-          int(Fe), np.pad(scaled[i], (int(1*Fe),0)))
+    write(os.path.join(sound_dir, "audio_f-lim_" + str(int(f_lim[i])) + "_Hz_bridge_acc.wav"),int(Fe),np.pad(audio_int32_uniform(uddz[i], max_uddz), (int(1 * Fe), 0)))
 
-    write(os.path.join(sound_dir, "audio_f-lim_"+str(int(f_lim[i]))+"_Hz_rayleigh_musician.wav"),
-          int(Fe), np.pad(scaled[i], (int(1*Fe),0)))
+    write(os.path.join(sound_dir, "audio_f-lim_" + str(int(f_lim[i])) + "_Hz_rayleigh_spectateur.wav"),nt(Fe),np.pad(audio_int32_uniform(P_spectator[i], max_pression), (int(1 * Fe), 0)))
 
+    write(os.path.join(sound_dir, "audio_f-lim_" + str(int(f_lim[i])) + "_Hz_rayleigh_musician.wav")int(Fe),np.pad(audio_int32_uniform(P_musician[i], max_pression), (int(1 * Fe), 0)))
